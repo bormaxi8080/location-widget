@@ -105,18 +105,32 @@
 
         function isoToFlagEmoji(iso2) {
             if (!iso2 || iso2.length !== 2) return '🏳️';
+            const cc = iso2.toUpperCase();
             const A = 0x1F1E6;
             const base = 'A'.charCodeAt(0);
             return String.fromCodePoint(
-                A + (iso2.charCodeAt(0) - base),
-                A + (iso2.charCodeAt(1) - base)
+                A + (cc.charCodeAt(0) - base),
+                A + (cc.charCodeAt(1) - base)
             );
         }
 
         function fmtTime(d) {
-            return d.toLocaleString(undefined, {
-                hour:'2-digit', minute:'2-digit', second:'2-digit'
-            });
+            return d.toLocaleString(undefined, { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+        }
+
+        function isIPv4(s) {
+            if (!s || typeof s !== 'string') return false;
+            // quick reject IPv6
+            if (s.includes(':')) return false;
+            // basic IPv4 validation
+            const parts = s.trim().split('.');
+            if (parts.length !== 4) return false;
+            for (const p of parts) {
+                if (!/^\d+$/.test(p)) return false;
+                const n = Number(p);
+                if (n < 0 || n > 255) return false;
+            }
+            return true;
         }
 
         function setLoading() {
@@ -140,7 +154,7 @@
         function setOK({ ip6, ip4, countryCode, source }) {
             elIP6.textContent = ip6 || '—';
 
-            if (ip4) {
+            if (ip4 && isIPv4(ip4)) {
                 elIP4.textContent = ip4;
                 elIP4.style.display = 'block';
             } else {
@@ -155,13 +169,10 @@
                 try { countryName = displayNames.of(cc) || ''; } catch {}
             }
 
-            elCountry.textContent = countryName
-                ? `${countryName} (${cc})`
-                : (cc || '');
+            elCountry.textContent = countryName ? `${countryName} (${cc})` : (cc || '');
 
             elMeta.classList.remove('err');
-            elMeta.textContent =
-                `Updated: ${fmtTime(new Date())} • Source: ${source}`;
+            elMeta.textContent = `Updated: ${fmtTime(new Date())} • Source: ${source}`;
         }
 
         async function fetchWithTimeout(url, timeoutMs = 7000) {
@@ -206,15 +217,37 @@
             throw new Error('IPv6 unavailable');
         }
 
+        // FIX: force IPv4 via api4.ipify.org (and validate output)
         async function getIPv4() {
-            try {
-                const res = await fetchWithTimeout('https://api.ipify.org?format=json');
-                if (!res.ok) return '';
-                const json = await res.json();
-                return json.ip || '';
-            } catch {
-                return '';
+            const endpoints = [
+                // Prefer JSON (fast) on dedicated IPv4 host
+                { url: 'https://api4.ipify.org?format=json', type: 'json' },
+                // Plain text on dedicated IPv4 host
+                { url: 'https://api4.ipify.org', type: 'text' },
+                // Fallback: regular host (may still return IPv6 on v6 networks)
+                { url: 'https://api.ipify.org?format=json', type: 'json' },
+                { url: 'https://api.ipify.org', type: 'text' }
+            ];
+
+            for (const ep of endpoints) {
+                try {
+                    const res = await fetchWithTimeout(ep.url);
+                    if (!res.ok) continue;
+
+                    let ip = '';
+                    if (ep.type === 'json') {
+                        const json = await res.json();
+                        ip = (json && json.ip) ? String(json.ip).trim() : '';
+                    } else {
+                        ip = (await res.text()).trim();
+                    }
+
+                    if (isIPv4(ip)) return ip;
+                } catch {
+                    // try next endpoint
+                }
             }
+            return '';
         }
 
         async function load() {
