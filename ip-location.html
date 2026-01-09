@@ -5,31 +5,44 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="referrer" content="no-referrer" />
     <title>IP • Country • Flag</title>
+
     <style>
-        /* Always-light theme (no prefers-color-scheme) */
         :root { color-scheme: light; }
 
         body{
             margin:0; padding:0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
             line-height:1.35;
-            background: transparent;
-            color: #111;
+            background:#ffffff;
+            color:#111;
         }
 
         .card{
             padding:12px 14px;
             border:1px solid rgba(0,0,0,.12);
             border-radius:14px;
-            background: rgba(255,255,255,.85);
-            backdrop-filter: blur(6px);
+            background:#ffffff;
+            box-shadow:0 1px 2px rgba(0,0,0,.06);
         }
 
         .row{ display:flex; align-items:center; gap:12px; }
         .flag{ font-size:28px; width:34px; text-align:center; }
         .title{ font-size:12px; opacity:.72; margin-bottom:2px; }
-        .ip{ font-size:16px; font-weight:700; word-break: break-all; }
-        .country{ font-size:13px; }
+
+        .ip{
+            font-size:16px;
+            font-weight:700;
+            word-break:break-all;
+        }
+
+        .ip.ipv4{
+            font-size:13px;
+            font-weight:500;
+            opacity:.85;
+            margin-top:2px;
+        }
+
+        .country{ font-size:13px; margin-top:4px; }
 
         .muted{
             font-size:12px;
@@ -46,22 +59,23 @@
             padding:6px 10px;
             border-radius:10px;
             border:1px solid rgba(0,0,0,.18);
-            background: transparent;
-            font: inherit;
-            color: inherit;
+            background:#ffffff;
+            font:inherit;
+            color:inherit;
         }
 
-        .err{ color:#b00020; opacity: 1; }
+        .err{ color:#b00020; opacity:1; }
     </style>
 </head>
 
 <body>
-<div class="card" id="card" role="group" aria-label="IP widget">
+<div class="card" role="group" aria-label="IP widget">
     <div class="row">
         <div class="flag" id="flag">⏳</div>
         <div style="min-width:0;">
             <div class="title">Current public IP</div>
-            <div class="ip" id="ip">Loading…</div>
+            <div class="ip" id="ip6">Loading…</div>
+            <div class="ip ipv4" id="ip4" style="display:none;"></div>
             <div class="country" id="country"></div>
         </div>
     </div>
@@ -75,7 +89,8 @@
 <script>
     (() => {
         const elFlag = document.getElementById('flag');
-        const elIP = document.getElementById('ip');
+        const elIP6 = document.getElementById('ip6');
+        const elIP4 = document.getElementById('ip4');
         const elCountry = document.getElementById('country');
         const elMeta = document.getElementById('meta');
         const btn = document.getElementById('refresh');
@@ -89,23 +104,25 @@
         })();
 
         function isoToFlagEmoji(iso2) {
-            if (!iso2 || typeof iso2 !== 'string' || iso2.length !== 2) return '🏳️';
-            const code = iso2.toUpperCase();
+            if (!iso2 || iso2.length !== 2) return '🏳️';
             const A = 0x1F1E6;
             const base = 'A'.charCodeAt(0);
             return String.fromCodePoint(
-                A + (code.charCodeAt(0) - base),
-                A + (code.charCodeAt(1) - base)
+                A + (iso2.charCodeAt(0) - base),
+                A + (iso2.charCodeAt(1) - base)
             );
         }
 
         function fmtTime(d) {
-            return d.toLocaleString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            return d.toLocaleString(undefined, {
+                hour:'2-digit', minute:'2-digit', second:'2-digit'
+            });
         }
 
         function setLoading() {
             elFlag.textContent = '⏳';
-            elIP.textContent = 'Loading…';
+            elIP6.textContent = 'Loading…';
+            elIP4.style.display = 'none';
             elCountry.textContent = '';
             elMeta.textContent = '';
             elMeta.classList.remove('err');
@@ -113,14 +130,22 @@
 
         function setError(msg) {
             elFlag.textContent = '⚠️';
-            elIP.textContent = '—';
+            elIP6.textContent = '—';
+            elIP4.style.display = 'none';
             elCountry.textContent = '';
             elMeta.textContent = msg || 'Failed to load IP info';
             elMeta.classList.add('err');
         }
 
-        function setOK({ ip, countryCode, source }) {
-            elIP.textContent = ip || '—';
+        function setOK({ ip6, ip4, countryCode, source }) {
+            elIP6.textContent = ip6 || '—';
+
+            if (ip4) {
+                elIP4.textContent = ip4;
+                elIP4.style.display = 'block';
+            } else {
+                elIP4.style.display = 'none';
+            }
 
             const cc = (countryCode || '').toUpperCase();
             elFlag.textContent = isoToFlagEmoji(cc);
@@ -130,27 +155,26 @@
                 try { countryName = displayNames.of(cc) || ''; } catch {}
             }
 
-            if (cc && countryName) elCountry.textContent = `${countryName} (${cc})`;
-            else if (cc) elCountry.textContent = cc;
-            else elCountry.textContent = '';
+            elCountry.textContent = countryName
+                ? `${countryName} (${cc})`
+                : (cc || '');
 
             elMeta.classList.remove('err');
-            elMeta.textContent = `Updated: ${fmtTime(new Date())} • Source: ${source}`;
+            elMeta.textContent =
+                `Updated: ${fmtTime(new Date())} • Source: ${source}`;
         }
 
-        async function fetchWithTimeout(url, opts = {}, timeoutMs = 7000) {
+        async function fetchWithTimeout(url, timeoutMs = 7000) {
             const controller = new AbortController();
             const id = setTimeout(() => controller.abort(), timeoutMs);
             try {
-                const res = await fetch(url, { ...opts, signal: controller.signal, cache: 'no-store' });
-                return res;
+                return await fetch(url, { signal: controller.signal, cache:'no-store' });
             } finally {
                 clearTimeout(id);
             }
         }
 
-        // Primary: Cloudflare trace (often returns: ip=..., loc=US, ...)
-        async function getFromCloudflareTrace() {
+        async function getIPv6AndCountry() {
             const urls = [
                 'https://cloudflare.com/cdn-cgi/trace',
                 'https://1.1.1.1/cdn-cgi/trace'
@@ -167,62 +191,53 @@
                             .filter(Boolean)
                             .map(l => {
                                 const i = l.indexOf('=');
-                                return i > 0 ? [l.slice(0, i), l.slice(i + 1)] : [l, ''];
+                                return i > 0 ? [l.slice(0,i), l.slice(i+1)] : [l,''];
                             })
                     );
-
-                    const ip = map.ip || '';
-                    const loc = map.loc || '';
-                    if (ip) return { ip, countryCode: loc, source: 'cloudflare-trace' };
-                } catch (_) { /* try next */ }
+                    if (map.ip) {
+                        return {
+                            ip6: map.ip,
+                            countryCode: map.loc || '',
+                            source: 'cloudflare-trace'
+                        };
+                    }
+                } catch {}
             }
-            throw new Error('cloudflare trace unavailable');
+            throw new Error('IPv6 unavailable');
         }
 
-        // Fallback: ipify (IP only) + ipapi.co (country code)
-        async function getFromIpifyAndIpapi() {
-            // ipify
-            const ipRes = await fetchWithTimeout('https://api64.ipify.org?format=json');
-            if (!ipRes.ok) throw new Error('ipify failed');
-            const ipJson = await ipRes.json();
-            const ip = ipJson && ipJson.ip ? String(ipJson.ip) : '';
-            if (!ip) throw new Error('ipify returned no ip');
-
-            // ipapi (best-effort)
-            const geoRes = await fetchWithTimeout('https://ipapi.co/json/');
-            if (!geoRes.ok) return { ip, countryCode: '', source: 'ipify' };
-            const geoJson = await geoRes.json();
-            const cc = geoJson && geoJson.country_code ? String(geoJson.country_code) : '';
-            return { ip, countryCode: cc, source: cc ? 'ipify+ipapi' : 'ipify' };
+        async function getIPv4() {
+            try {
+                const res = await fetchWithTimeout('https://api.ipify.org?format=json');
+                if (!res.ok) return '';
+                const json = await res.json();
+                return json.ip || '';
+            } catch {
+                return '';
+            }
         }
 
         async function load() {
             setLoading();
             try {
-                // Try trace first (single request, usually enough)
-                const r1 = await getFromCloudflareTrace();
-                setOK(r1);
-                return;
-            } catch (_) {
-                // Fallback chain
-            }
+                const [v6, v4] = await Promise.all([
+                    getIPv6AndCountry(),
+                    getIPv4()
+                ]);
 
-            try {
-                const r2 = await getFromIpifyAndIpapi();
-                setOK(r2);
-                return;
-            } catch (_) {
-                setError('Failed to load IP info (network/CORS blocked)');
+                setOK({
+                    ip6: v6.ip6,
+                    ip4: v4,
+                    countryCode: v6.countryCode,
+                    source: v6.source
+                });
+            } catch {
+                setError('Failed to load IP info');
             }
         }
 
-        // Keep Refresh button behavior as-is
         btn.addEventListener('click', load);
-
-        // Initial load
         load();
-
-        // Auto-refresh every 60 seconds
         setInterval(load, 60 * 1000);
     })();
 </script>
