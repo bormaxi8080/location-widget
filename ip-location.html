@@ -6,30 +6,41 @@
     <meta name="referrer" content="no-referrer" />
     <title>IP • Country • Flag</title>
     <style>
-        :root { color-scheme: light dark; }
+        /* Always-light theme (no prefers-color-scheme) */
+        :root { color-scheme: light; }
+
         body{
             margin:0; padding:0;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
             line-height:1.35;
             background: transparent;
+            color: #111;
         }
+
         .card{
             padding:12px 14px;
             border:1px solid rgba(0,0,0,.12);
             border-radius:14px;
-            background: rgba(255,255,255,.65);
+            background: rgba(255,255,255,.85);
             backdrop-filter: blur(6px);
         }
-        @media (prefers-color-scheme: dark){
-            .card{ background: rgba(20,20,20,.55); border-color: rgba(255,255,255,.14); }
-            .muted{ opacity:.78; }
-        }
+
         .row{ display:flex; align-items:center; gap:12px; }
         .flag{ font-size:28px; width:34px; text-align:center; }
         .title{ font-size:12px; opacity:.72; margin-bottom:2px; }
         .ip{ font-size:16px; font-weight:700; word-break: break-all; }
         .country{ font-size:13px; }
-        .muted{ font-size:12px; opacity:.65; margin-top:8px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+
+        .muted{
+            font-size:12px;
+            opacity:.75;
+            margin-top:8px;
+            display:flex;
+            gap:10px;
+            flex-wrap:wrap;
+            align-items:center;
+        }
+
         button{
             cursor:pointer;
             padding:6px 10px;
@@ -37,11 +48,10 @@
             border:1px solid rgba(0,0,0,.18);
             background: transparent;
             font: inherit;
+            color: inherit;
         }
-        @media (prefers-color-scheme: dark){
-            button{ border-color: rgba(255,255,255,.20); }
-        }
-        .err{ color:#b00020; }
+
+        .err{ color:#b00020; opacity: 1; }
     </style>
 </head>
 
@@ -178,7 +188,7 @@
             const ip = ipJson && ipJson.ip ? String(ipJson.ip) : '';
             if (!ip) throw new Error('ipify returned no ip');
 
-            // ipapi
+            // ipapi (best-effort)
             const geoRes = await fetchWithTimeout('https://ipapi.co/json/');
             if (!geoRes.ok) return { ip, countryCode: '', source: 'ipify' };
             const geoJson = await geoRes.json();
@@ -201,13 +211,19 @@
                 const r2 = await getFromIpifyAndIpapi();
                 setOK(r2);
                 return;
-            } catch (e) {
+            } catch (_) {
                 setError('Failed to load IP info (network/CORS blocked)');
             }
         }
 
+        // Keep Refresh button behavior as-is
         btn.addEventListener('click', load);
+
+        // Initial load
         load();
+
+        // Auto-refresh every 60 seconds
+        setInterval(load, 60 * 1000);
     })();
 </script>
 </body>
