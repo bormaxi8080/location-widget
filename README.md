@@ -1,0 +1,1 @@
+IP and location widget for start.me boards

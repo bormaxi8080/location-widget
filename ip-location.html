@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>IP • Country • Flag</title>
+    <style>
+        :root { color-scheme: light dark; }
+        body{
+            margin:0; padding:0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            line-height:1.35;
+            background: transparent;
+        }
+        .card{
+            padding:12px 14px;
+            border:1px solid rgba(0,0,0,.12);
+            border-radius:14px;
+            background: rgba(255,255,255,.65);
+            backdrop-filter: blur(6px);
+        }
+        @media (prefers-color-scheme: dark){
+            .card{ background: rgba(20,20,20,.55); border-color: rgba(255,255,255,.14); }
+            .muted{ opacity:.78; }
+        }
+        .row{ display:flex; align-items:center; gap:12px; }
+        .flag{ font-size:28px; width:34px; text-align:center; }
+        .title{ font-size:12px; opacity:.72; margin-bottom:2px; }
+        .ip{ font-size:16px; font-weight:700; word-break: break-all; }
+        .country{ font-size:13px; }
+        .muted{ font-size:12px; opacity:.65; margin-top:8px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+        button{
+            cursor:pointer;
+            padding:6px 10px;
+            border-radius:10px;
+            border:1px solid rgba(0,0,0,.18);
+            background: transparent;
+            font: inherit;
+        }
+        @media (prefers-color-scheme: dark){
+            button{ border-color: rgba(255,255,255,.20); }
+        }
+        .err{ color:#b00020; }
+    </style>
+</head>
+
+<body>
+<div class="card" id="card" role="group" aria-label="IP widget">
+    <div class="row">
+        <div class="flag" id="flag">⏳</div>
+        <div style="min-width:0;">
+            <div class="title">Current public IP</div>
+            <div class="ip" id="ip">Loading…</div>
+            <div class="country" id="country"></div>
+        </div>
+    </div>
+
+    <div class="muted">
+        <button id="refresh" type="button">Refresh</button>
+        <span id="meta"></span>
+    </div>
+</div>
+
+<script>
+    (() => {
+        const elFlag = document.getElementById('flag');
+        const elIP = document.getElementById('ip');
+        const elCountry = document.getElementById('country');
+        const elMeta = document.getElementById('meta');
+        const btn = document.getElementById('refresh');
+
+        const displayNames = (() => {
+            try {
+                return new Intl.DisplayNames([navigator.language || 'en'], { type: 'region' });
+            } catch {
+                return null;
+            }
+        })();
+
+        function isoToFlagEmoji(iso2) {
+            if (!iso2 || typeof iso2 !== 'string' || iso2.length !== 2) return '🏳️';
+            const code = iso2.toUpperCase();
+            const A = 0x1F1E6;
+            const base = 'A'.charCodeAt(0);
+            return String.fromCodePoint(
+                A + (code.charCodeAt(0) - base),
+                A + (code.charCodeAt(1) - base)
+            );
+        }
+
+        function fmtTime(d) {
+            return d.toLocaleString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+
+        function setLoading() {
+            elFlag.textContent = '⏳';
+            elIP.textContent = 'Loading…';
+            elCountry.textContent = '';
+            elMeta.textContent = '';
+            elMeta.classList.remove('err');
+        }
+
+        function setError(msg) {
+            elFlag.textContent = '⚠️';
+            elIP.textContent = '—';
+            elCountry.textContent = '';
+            elMeta.textContent = msg || 'Failed to load IP info';
+            elMeta.classList.add('err');
+        }
+
+        function setOK({ ip, countryCode, source }) {
+            elIP.textContent = ip || '—';
+
+            const cc = (countryCode || '').toUpperCase();
+            elFlag.textContent = isoToFlagEmoji(cc);
+
+            let countryName = '';
+            if (cc && displayNames) {
+                try { countryName = displayNames.of(cc) || ''; } catch {}
+            }
+
+            if (cc && countryName) elCountry.textContent = `${countryName} (${cc})`;
+            else if (cc) elCountry.textContent = cc;
+            else elCountry.textContent = '';
+
+            elMeta.classList.remove('err');
+            elMeta.textContent = `Updated: ${fmtTime(new Date())} • Source: ${source}`;
+        }
+
+        async function fetchWithTimeout(url, opts = {}, timeoutMs = 7000) {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                const res = await fetch(url, { ...opts, signal: controller.signal, cache: 'no-store' });
+                return res;
+            } finally {
+                clearTimeout(id);
+            }
+        }
+
+        // Primary: Cloudflare trace (often returns: ip=..., loc=US, ...)
+        async function getFromCloudflareTrace() {
+            const urls = [
+                'https://cloudflare.com/cdn-cgi/trace',
+                'https://1.1.1.1/cdn-cgi/trace'
+            ];
+
+            for (const url of urls) {
+                try {
+                    const res = await fetchWithTimeout(url);
+                    if (!res.ok) continue;
+                    const text = await res.text();
+                    const map = Object.fromEntries(
+                        text.split('\n')
+                            .map(l => l.trim())
+                            .filter(Boolean)
+                            .map(l => {
+                                const i = l.indexOf('=');
+                                return i > 0 ? [l.slice(0, i), l.slice(i + 1)] : [l, ''];
+                            })
+                    );
+
+                    const ip = map.ip || '';
+                    const loc = map.loc || '';
+                    if (ip) return { ip, countryCode: loc, source: 'cloudflare-trace' };
+                } catch (_) { /* try next */ }
+            }
+            throw new Error('cloudflare trace unavailable');
+        }
+
+        // Fallback: ipify (IP only) + ipapi.co (country code)
+        async function getFromIpifyAndIpapi() {
+            // ipify
+            const ipRes = await fetchWithTimeout('https://api64.ipify.org?format=json');
+            if (!ipRes.ok) throw new Error('ipify failed');
+            const ipJson = await ipRes.json();
+            const ip = ipJson && ipJson.ip ? String(ipJson.ip) : '';
+            if (!ip) throw new Error('ipify returned no ip');
+
+            // ipapi
+            const geoRes = await fetchWithTimeout('https://ipapi.co/json/');
+            if (!geoRes.ok) return { ip, countryCode: '', source: 'ipify' };
+            const geoJson = await geoRes.json();
+            const cc = geoJson && geoJson.country_code ? String(geoJson.country_code) : '';
+            return { ip, countryCode: cc, source: cc ? 'ipify+ipapi' : 'ipify' };
+        }
+
+        async function load() {
+            setLoading();
+            try {
+                // Try trace first (single request, usually enough)
+                const r1 = await getFromCloudflareTrace();
+                setOK(r1);
+                return;
+            } catch (_) {
+                // Fallback chain
+            }
+
+            try {
+                const r2 = await getFromIpifyAndIpapi();
+                setOK(r2);
+                return;
+            } catch (e) {
+                setError('Failed to load IP info (network/CORS blocked)');
+            }
+        }
+
+        btn.addEventListener('click', load);
+        load();
+    })();
+</script>
+</body>
+</html>
